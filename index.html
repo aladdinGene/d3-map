@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Force-Directed Graph</title>
+<style>
+
+.node {
+  cursor: pointer;
+  stroke: #3182bd;
+  stroke-width: 1.5px;
+}
+
+.link {
+  fill: none;
+  stroke: #9ecae1;
+  stroke-width: 1.5px;
+}
+
+p{
+  font-size: 0.8rem;
+  opacity: 0;
+  transition: .1s;
+}
+
+p>span{
+  font-size: 1rem;
+}
+
+p.show{
+  opacity: 1;
+}
+#node-detail{
+  margin-top: 200px;
+}
+.hidden {
+      display: none;
+}
+div.tooltip {
+  color: #222; 
+  background: #fff; 
+  border-radius: 3px; 
+  box-shadow: 0px 0px 2px 0px #a6a6a6; 
+  padding: .2em; 
+  text-shadow: #f5f5f5 0 1px 0;
+  opacity: 0.9; 
+  position: absolute;
+  padding: 10px;
+  top: 1700px;
+  left: 1000px;
+}
+div.tooltip p{
+  opacity: 1;
+  margin: 0;
+}
+div.tooltip>p{
+  font-weight: bold;
+  text-align: center;
+  font-size: 1rem;
+}
+div.tooltip>div>span{
+  padding: 5px;
+}
+svg#world-map{
+  padding-bottom: 100px;
+}
+div.tooltip>div>span.color{
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+}
+#world-map circle{
+  pointer-events: none;
+}
+</style>
+<body>
+<h1>Frequency of mutations of Mycobacterium Tuberculosis</h1>
+<div>
+  <label>GENE_NAME</label>
+  <select id="gene-name"></select>
+  <select id="symbol">
+    <option value="1">or</option>
+    <option value="2">and</option>
+  </select>
+  <select id="drug-name"></select>
+  <label>DRUG_NAME</label>
+  <button onClick="filter()">Filter</button>
+</div>
+<div id="bar-graph"></div>
+<h1 style="margin-top: 40px;">Relationship between gene and its drug resistant mutations</h1>
+<div style="display:flex;">
+  <div id="node-graph"></div>
+  <p id="node-detail"></p>
+</div>
+<h1>Geography of the tb resistance</h1>
+<svg id="world-map" width="1000" height="450"></svg>
+<div class="tooltip"></div>
+<script src="./assets/d3.v3.js"></script>
+<script src="https://d3js.org/topojson.v2.min.js"></script>
+<script src="https://d3js.org/d3-queue.v3.min.js"></script>
+<script>
+
+var width = 900,
+    height = 750,
+    root,
+    refresh,
+    tb;
+
+var force = d3.layout.force()
+    .size([width, height])
+    .on("tick", tick);
+
+var svg = d3.select("#node-graph").append("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+var link = svg.selectAll(".link"),
+    node = svg.selectAll(".node");
+var values = []
+var gene_names = [], drug_names = [];
+
+const filter = () => {
+  var selected_symbol = document.getElementById('symbol').value
+  var selected_gene_name = document.getElementById('gene-name').value
+  var selected_drug_name = document.getElementById('drug-name').value
+  console.log(selected_drug_name, selected_gene_name, selected_symbol)
+  if(selected_symbol == 1)
+    values = tb.filter(row => row.GENE_NAME == selected_gene_name || row.DRUG_NAME == selected_drug_name).map(row => row.NUCLEOTIDE_POSITION)
+  else values = tb.filter(row => row.GENE_NAME == selected_gene_name && row.DRUG_NAME == selected_drug_name).map(row => row.NUCLEOTIDE_POSITION)
+
+  refresh(values)
+}
+
+d3.csv("./assets/tb.csv", function(data){ 
+    tb = data;
+    var tempData = {}
+    tb.map(row => {
+      if(!tempData[row.GENE_NAME]) tempData[row.GENE_NAME] = []
+      tempData[row.GENE_NAME].push({name: row.DRUG_NAME, ...row})
+      values.push(row.NUCLEOTIDE_POSITION)
+      if(!gene_names.includes(row.GENE_NAME)) gene_names.push(row.GENE_NAME)
+      if(!drug_names.includes(row.DRUG_NAME)) drug_names.push(row.DRUG_NAME)
+    })
+    var realData = {name: 'root', children: []}
+    Object.keys(tempData).map(key => {
+      realData.children.push({name: key, children: tempData[key]})
+    })
+    document.getElementById("gene-name").innerHTML = gene_names.map(gene_name => (`<option value="${gene_name}">${gene_name}</option>`)).join()
+    document.getElementById("drug-name").innerHTML = drug_names.map(drug_name => (`<option value="${drug_name}">${drug_name}</option>`)).join()
+    // console.log(values, gene_names, drug_names)
+    root = realData;
+    update();
+    createBar();
+    worldMap();
+  })
+function update() {
+  var nodes = flatten(root),
+      links = d3.layout.tree().links(nodes);
+  // Restart the force layout.
+  force
+      .nodes(nodes)
+      .links(links)
+      .start();
+
+  // Update the links…
+  link = link.data(links, function(d) { return d.target.id; });
+
+  // Exit any old links.
+  link.exit().remove();
+
+  // Enter any new links.
+  link.enter().insert("line", ".node")
+      .attr("class", "link")
+      .attr("x1", function(d) { return d.source.x; })
+      .attr("y1", function(d) { return d.source.y; })
+      .attr("x2", function(d) { return d.target.x; })
+      .attr("y2", function(d) { return d.target.y; });
+
+  // Update the nodes…
+  node = node.data(nodes, function(d) { return d.id; }).style("fill", color);
+
+  // Exit any old nodes.
+  node.exit().remove();
+
+  // Enter any new nodes.
+  node.enter().append("circle")
+      .attr("class", "node")
+      .attr("cx", function(d) { return d.x / 2 + 200; })
+      .attr("cy", function(d) { return d.y / 2 + 180; })
+      .attr("r", function(d) { return Math.sqrt(d.size) / 10 || 2.5; })
+      .style("fill", color)
+      .on("click", click)
+      .on("mouseover", click)
+      .on('mouseleave', nodeMouseLeave)
+      .call(force.drag);
+}
+
+function tick() {
+  link.attr("x1", function(d) { return d.source.x / 2 + 200; })
+      .attr("y1", function(d) { return d.source.y / 2 + 180; })
+      .attr("x2", function(d) { return d.target.x / 2 + 200; })
+      .attr("y2", function(d) { return d.target.y / 2 + 180; });
+
+  node.attr("cx", function(d) { return d.x / 2 + 200; })
+      .attr("cy", function(d) { return d.y / 2 + 180; });
+}
+
+// Color leaf nodes orange, and packages white or blue.
+function color(d) {
+  return d._children ? "#3182bd" : d.children ? "#c6dbef" : "#fd8d3c";
+}
+
+// Toggle children on click.
+function click(d) {
+  var nodeDetail = document.getElementById('node-detail');
+  nodeDetail.classList.add('show')
+  nodeDetail.innerHTML = `GENE_NAME: <span> ${d.GENE_NAME} </span> <br>
+                          ENSEMBL_ID: <span> ${d.ENSEMBL_ID} </span> <br>
+                          ORGANISM_NAME: <span> ${d.ORGANISM_NAME} </span> <br>
+                          DRUG_NAME: <span> ${d.DRUG_NAME} </span> <br>
+                          NUCLEOTIDE_POSITION: <span> ${d.NUCLEOTIDE_POSITION} </span> <br>
+                          NUCLOTIDE_MUTATION: <span> ${d.NUCLOTIDE_MUTATION} </span> <br>
+                          AMINOACID_POSITION: <span> ${d.AMINOACID_POSITION} </span> <br>
+                          AMINOACID_MUTATION: <span> ${d.AMINOACID_MUTATION} </span> <br>
+                          TYPE_OF_MUTATION: <span> ${d.TYPE_OF_MUTATION} </span> <br>
+                          PROVEAN_SCORE: <span> ${d.PROVEAN_SCORE} </span> <br>
+                          TYPE_OF_SEQUENCING: <span> ${d.TYPE_OF_SEQUENCING} </span> <br>
+                          STRAIN: <span> ${d.STRAIN} </span> <br>
+                          SAMPLE_LOCATION: <span> ${d.SAMPLE_LOCATION} </span> <br>
+                          PUBMED_ID: <span> ${d.PUBMED_ID} </span>
+                        `
+  if (!d3.event.defaultPrevented) {
+    if (d.children) {
+      d._children = d.children;
+      d.children = null;
+    } else {
+      d.children = d._children;
+      d._children = null;
+    }
+    update();
+  }
+}
+
+function nodeMouseLeave(){
+  document.getElementById("node-detail").classList.remove('show')
+}
+
+// Returns a list of all nodes under the root.
+function flatten(root) {
+  var nodes = [], i = 0;
+
+  function recurse(node) {
+    if (node.children) node.children.forEach(recurse);
+    // node.forEach(recurse);
+    if (!node.id) node.id = ++i;
+    nodes.push(node);
+  }
+
+  recurse(root);
+  return nodes;
+}
+
+// bar graph
+const createBar = () => {
+  var barColor = "steelblue";
+
+// Generate a 1000 data points using normal distribution with mean=20, deviation=5
+// var values = d3.range(1000).map(d3.random.normal(20, 5));
+
+// A formatter for counts.
+var formatCount = d3.format(",.0f");
+
+var margin = {top: 20, right: 30, bottom: 30, left: 30},
+    width = 960 - margin.left - margin.right,
+    height = 500 - margin.top - margin.bottom;
+
+var max = d3.max(values);
+var min = d3.min(values);
+var x = d3.scale.linear()
+      .domain([-100, 3500])
+      .range([0, width]);
+
+// Generate a histogram using twenty uniformly-spaced bins.
+var data = d3.layout.histogram()
+    .bins(x.ticks(40))
+    (values);
+
+var yMax = d3.max(data, function(d){return d.length});
+var yMin = d3.min(data, function(d){return d.length});
+var colorScale = d3.scale.linear()
+            .domain([yMin, yMax])
+            .range([d3.rgb(barColor).brighter(), d3.rgb(barColor).darker()]);
+
+var y = d3.scale.linear()
+    .domain([0, yMax])
+    .range([height, 0]);
+
+var xAxis = d3.svg.axis()
+    .scale(x)
+    .orient("bottom");
+
+var svg = d3.select("#bar-graph").append("svg")
+    .attr("width", width + margin.left + margin.right)
+    .attr("height", height + margin.top + margin.bottom)
+  .append("g")
+    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+var bar = svg.selectAll(".bar")
+    .data(data)
+  .enter().append("g")
+    .attr("class", "bar")
+    .attr("transform", function(d) { return "translate(" + x(d.x) + "," + y(d.y) + ")"; });
+
+bar.append("rect")
+    .attr("x", 1)
+    .attr("width", (x(data[0].dx) - x(0)) - 1)
+    .attr("height", function(d) { return height - y(d.y); })
+    .attr("fill", function(d) { return colorScale(d.y) });
+
+bar.append("text")
+    .attr("dy", ".75em")
+    .attr("y", -12)
+    .attr("x", (x(data[0].dx) - x(0)) / 2)
+    .attr("text-anchor", "middle")
+    .text(function(d) { return formatCount(d.y); });
+
+svg.append("g")
+    .attr("class", "x axis")
+    .attr("transform", "translate(0," + height + ")")
+    .call(xAxis);
+
+/*
+* Adding refresh method to reload new data
+*/
+refresh = (values) => {
+  // var values = d3.range(1000).map(d3.random.normal(20, 5));
+  var data = d3.layout.histogram()
+    .bins(x.ticks(40))
+    (values);
+
+  // Reset y domain using new data
+  var yMax = d3.max(data, function(d){return d.length});
+  var yMin = d3.min(data, function(d){return d.length});
+  y.domain([0, yMax]);
+  var colorScale = d3.scale.linear()
+              .domain([yMin, yMax])
+              .range([d3.rgb(barColor).brighter(), d3.rgb(barColor).darker()]);
+
+  var bar = svg.selectAll(".bar").data(data);
+
+  // Remove object with data
+  bar.exit().remove();
+
+  bar.transition()
+    .duration(1000)
+    .attr("transform", function(d) { return "translate(" + x(d.x) + "," + y(d.y) + ")"; });
+
+  bar.select("rect")
+      .transition()
+      .duration(1000)
+      .attr("height", function(d) { return height - y(d.y); })
+      .attr("fill", function(d) { return colorScale(d.y) });
+
+  bar.select("text")
+      .transition()
+      .duration(1000)
+      .text(function(d) { return formatCount(d.y); });
+
+}
+}
+
+function worldMap() {
+  var width = 960,
+    height = 480;
+
+
+  // var force = d3.layout.force()
+  //   .size([width, height])
+  //   .on("tick", tick);
+  var projection = d3.geo.equirectangular()
+      .scale(height / Math.PI)
+      .translate([width * 0.46, height * 0.6]);
+
+  var path = d3.geo.path()
+      .projection(projection);
+
+  var svg = d3
+  .select("svg#world-map")
+  .append("g")
+      .attr("width", width)
+      .attr("height", height);
+
+
+
+  
+
+
+  var tooltip = d3.select("div.tooltip");
+
+
+  d3.queue()
+    .defer(d3.json, "./assets/world-110m.json")
+    .defer(d3.csv, "./assets/world-country-names.csv")
+    .await(ready);
+  function ready(error, world, names) {
+    if (error) throw error;
+    var countries1 = topojson.feature(world, world.objects.countries).features;
+      countries = countries1.filter(function(d) {
+      return names.some(function(n) {
+        if (d.id == n.id) return d.name = n.name;
+      })});
+
+    var circleData = countries.map(fixCircleData).flatMap(a => a)
+
+    circleData = circleData.map((data, index) => {
+      data.id = index;
+      return data
+    })
+
+    function tooltipContents(countryName){
+      var thisData = circleData.filter(data => data.name == countryName)
+      console.log(thisData)
+      var html = `<p>${countryName}</p>`
+      thisData.map(row => {
+        html += `<div><span class="color" style="background:${row.color};"></span><span>${row.GENE_NAME}</span><span>${row.DRUG_NAME}</span></div>`
+      })
+      return html;
+    }
+
+    svg.selectAll("path")
+        .data(countries)
+        .enter()
+        .append("path")
+        .attr("stroke","#FFF")
+        .attr("stroke-width",1)
+              .attr("fill", "#000")
+        .attr("d", path )
+        .on("mouseover",function(d,i){
+          d3.select(this).attr("fill","#333").attr("stroke-width",2);
+                  return tooltip.style("hidden", false).html(tooltipContents(d.name));
+              })
+              .on("mousemove",function(d){
+                  tooltip.classed("hidden", false)
+                         .html(tooltipContents(d.name));
+              })
+              .on("mouseout",function(d,i){
+                  d3.select(this).attr("fill","#000").attr("stroke-width",1);
+                  tooltip.classed("hidden", true);
+              });
+
+    const nodes = svg.selectAll("circle")
+      .data(circleData)
+      // .join("circle")
+      .enter()
+      .append('circle')
+      .attr("class", "collab")
+      .attr("cx", d => d.location[0]) // get the center of the shape using geoPath.centroid
+      .attr("cy", d => d.location[1])
+      .attr("r", 3)
+      .style('fill', d => d.color)
+      // .style('fill', d => Object.keys(colores).includes(d.Pais) ? colores[d.Pais] : 'gold')
+      .style('stroke', '#000')
+      .style('stroke-width', '1.5px');
+  };
+  const dotColors = ["#4e79a7", "#f28e2c", "#e1575a", "#58a14e", "#fe9da7"]
+  const fixedPosition = [[0, 0], [5, 5], [-5, 5], [5, -5], [-5, -5]]
+  function fixCircleData(country){
+    var countryName = country.name
+    var centroid = path.centroid(country)
+    var count = 0;
+    var gene_names = [],
+        drug_names = [],
+        drugs = [];
+    for(var i=0;i<tb.length;i++) {
+      if(tb[i].SAMPLE_LOCATION.toLowerCase().includes(countryName.toLowerCase())){
+        if(!gene_names.includes(tb[i].GENE_NAME) || !drug_names.includes(tb[i].DRUG_NAME)){
+          gene_names.push(tb[i].GENE_NAME)
+          drug_names.push(tb[i].DRUG_NAME)
+          var location = [centroid[0] + fixedPosition[count][0], centroid[1] + fixedPosition[count][1]]
+          drugs.push({name: countryName, location: location, GENE_NAME: tb[i].GENE_NAME, DRUG_NAME: tb[i].DRUG_NAME, color: dotColors[count]})
+          count++;
+        }
+      }
+      if(count == 5) break;
+    }
+    return drugs
+  }
+}
+
+</script>
